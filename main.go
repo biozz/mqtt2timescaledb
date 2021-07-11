@@ -19,18 +19,12 @@ var (
 	mqttServer = flag.String("mq", "tcp://127.0.0.1:1883", "mqtt server to connect to")
 	username   = flag.String("u", "", "username for auth")
 	password   = flag.String("p", "", "password for auth")
-	dbServer   = flag.String("db", "postgres://postgres:postgres@localhost:5432/measurements", "database to connect to")
+	dbURL      = flag.String("db", "postgres://postgres:postgres@localhost:5432/measurements", "database to connect to")
 	debug      = flag.Bool("vvv", false, "verbose output for debugging")
 )
 
 func main() {
 	flag.Parse()
-	// db stuff
-	conn, err := pgx.Connect(context.Background(), *dbServer)
-	if err != nil {
-		log.Fatalf("Unable to connect to the database: %v", err)
-	}
-	defer conn.Close(context.Background())
 
 	// mqtt stuff
 	clientOptions := mqtt.NewClientOptions()
@@ -45,9 +39,13 @@ func main() {
 	if err := token.Error(); err != nil {
 		log.Fatalf("Token error: %v", err)
 	}
-	mc := MeasurementConverter{Conn: conn}
+	conn, err := pgx.Connect(context.Background(), *dbURL)
+	if err != nil {
+		log.Fatalf("Unable to connect to the database: %v", err)
+	}
+	dcw := DatabaseConnWrapper{DatabaseURL: *dbURL, Conn: conn}
 	go func() {
-		client.Subscribe("#", 0, mc.MessageHandler)
+		client.Subscribe("#", 0, dcw.MessageHandler)
 	}()
 
 	// wait for exit
@@ -62,13 +60,28 @@ func main() {
 	<-exit
 }
 
-type MeasurementConverter struct {
-	Conn *pgx.Conn
+type DatabaseConnWrapper struct {
+	DatabaseURL string
+	Conn        *pgx.Conn
 }
 
-func (mc *MeasurementConverter) MessageHandler(c mqtt.Client, m mqtt.Message) {
+func (dcw *DatabaseConnWrapper) MessageHandler(c mqtt.Client, m mqtt.Message) {
 	if *debug {
 		log.Printf("topic: %s, payload: %s", m.Topic(), string(m.Payload()))
+	}
+
+	// I have no idea how to properly handle reconnections
+	// but this works well for me.
+	err := dcw.Conn.Ping(context.Background())
+	if err != nil {
+		log.Println("Skip message due to lost db connection")
+		conn, err := pgx.Connect(context.Background(), dcw.DatabaseURL)
+		if err != nil {
+			log.Println("Reconnect attempt failed")
+			return
+		}
+		dcw.Conn = conn
+		return
 	}
 	if !strings.Contains(m.Topic(), "/") {
 		log.Printf("Metric doesn't follow slash format: %s", m.Topic())
@@ -90,7 +103,7 @@ func (mc *MeasurementConverter) MessageHandler(c mqtt.Client, m mqtt.Message) {
 		return
 	}
 
-	err = mc.Conn.BeginFunc(context.Background(), func(tx pgx.Tx) error {
+	err = dcw.Conn.BeginFunc(context.Background(), func(tx pgx.Tx) error {
 		_, err := tx.Exec(
 			context.Background(),
 			"INSERT INTO environment (time, location, room, sensor, measurement, value) VALUES (NOW(), $1, $2, $3, $4, $5)",
