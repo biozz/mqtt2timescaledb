@@ -93,7 +93,7 @@ func (mc *MeasurementConverter) MessageHandler(c mqtt.Client, m mqtt.Message) {
 	err = mc.Conn.BeginFunc(context.Background(), func(tx pgx.Tx) error {
 		_, err := tx.Exec(
 			context.Background(),
-			"INSERT INTO environment (room, location, sensor, measurement, value) VALUES ($1, $2, $3, $4, $5)",
+			"INSERT INTO environment (time, room, location, sensor, measurement, value) VALUES (NOW(), $1, $2, $3, $4, $5)",
 			location, room, sensor, measurement, value,
 		)
 		return err
