@@ -17,7 +17,11 @@ community.docker.docker_container:
   state: started
   restart_policy: "unless-stopped"
   command: 
-    - "./mqtt2timescaledb -mq {{ broker_url }} -db {{ database_url }}"
+    - "./mqtt2timescaledb"
+    - "-mq {{ broker_url }}"
+    - "-u admin"
+    - "-p admin"
+    - "-db {{ database_url }}"
   networks:
     - name: "{{ my_network }}"
 ```

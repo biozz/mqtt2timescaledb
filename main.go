@@ -17,6 +17,8 @@ import (
 
 var (
 	mqttServer = flag.String("mq", "tcp://127.0.0.1:1883", "mqtt server to connect to")
+	username   = flag.String("u", "", "username for auth")
+	password   = flag.String("p", "", "password for auth")
 	dbServer   = flag.String("db", "postgres://postgres:postgres@localhost:5432/measurements", "database to connect to")
 	debug      = flag.Bool("vvv", false, "verbose output for debugging")
 )
@@ -34,6 +36,8 @@ func main() {
 	clientOptions := mqtt.NewClientOptions()
 	clientOptions.AddBroker(*mqttServer)
 	clientOptions.SetClientID("mqtt2timescaledb")
+	clientOptions.SetUsername(*username)
+	clientOptions.SetPassword(*password)
 	client := mqtt.NewClient(clientOptions)
 	token := client.Connect()
 	for !token.WaitTimeout(3 * time.Second) {
