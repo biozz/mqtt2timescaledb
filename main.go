@@ -75,14 +75,18 @@ func (dcw *DatabaseConnWrapper) MessageHandler(c mqtt.Client, m mqtt.Message) {
 	err := dcw.Conn.Ping(context.Background())
 	if err != nil {
 		log.Println("Skip message due to lost db connection")
+		dcw.Conn.Close(context.Background())
 		conn, err := pgx.Connect(context.Background(), dcw.DatabaseURL)
 		if err != nil {
 			log.Println("Reconnect attempt failed")
 			return
 		}
+
 		dcw.Conn = conn
 		return
 	}
+
+	// actual message handling
 	if !strings.Contains(m.Topic(), "/") {
 		log.Printf("Metric doesn't follow slash format: %s", m.Topic())
 		return
