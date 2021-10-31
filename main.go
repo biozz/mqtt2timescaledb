@@ -13,6 +13,7 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4/pgxpool"
 )
 
 var (
@@ -39,14 +40,12 @@ func main() {
 	if err := token.Error(); err != nil {
 		log.Fatalf("Token error: %v", err)
 	}
-	conn, err := pgx.Connect(context.Background(), *dbURL)
+	pool, err := pgxpool.Connect(context.Background(), *dbURL)
 	if err != nil {
 		log.Fatalf("Unable to connect to the database: %v", err)
 	}
-	dcw := DatabaseConnWrapper{DatabaseURL: *dbURL, Conn: conn}
-	go func() {
-		client.Subscribe("#", 0, dcw.MessageHandler)
-	}()
+	h := Handler{Pool: pool}
+	go func() { client.Subscribe("#", 0, h.OnMessage) }()
 
 	// wait for exit
 	signals := make(chan os.Signal)
@@ -60,29 +59,17 @@ func main() {
 	<-exit
 }
 
-type DatabaseConnWrapper struct {
-	DatabaseURL string
-	Conn        *pgx.Conn
+type Handler struct {
+	Pool *pgxpool.Pool
 }
 
-func (dcw *DatabaseConnWrapper) MessageHandler(c mqtt.Client, m mqtt.Message) {
+func (h *Handler) OnMessage(c mqtt.Client, m mqtt.Message) {
 	if *debug {
 		log.Printf("topic: %s, payload: %s", m.Topic(), string(m.Payload()))
 	}
-
-	// I have no idea how to properly handle reconnections
-	// but this works well for me.
-	err := dcw.Conn.Ping(context.Background())
+	err := h.Pool.Ping(context.Background())
 	if err != nil {
 		log.Println("Skip message due to lost db connection")
-		dcw.Conn.Close(context.Background())
-		conn, err := pgx.Connect(context.Background(), dcw.DatabaseURL)
-		if err != nil {
-			log.Println("Reconnect attempt failed")
-			return
-		}
-
-		dcw.Conn = conn
 		return
 	}
 
@@ -107,7 +94,7 @@ func (dcw *DatabaseConnWrapper) MessageHandler(c mqtt.Client, m mqtt.Message) {
 		return
 	}
 
-	err = dcw.Conn.BeginFunc(context.Background(), func(tx pgx.Tx) error {
+	err = h.Pool.BeginFunc(context.Background(), func(tx pgx.Tx) error {
 		_, err := tx.Exec(
 			context.Background(),
 			"INSERT INTO environment (time, location, room, sensor, measurement, value) VALUES (NOW(), $1, $2, $3, $4, $5)",
